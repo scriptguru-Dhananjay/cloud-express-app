@@ -1,11 +1,11 @@
-import { Component } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Component } from 'react'
+import { Text, View, StyleSheet } from 'react-native'
 
 export default class TermService extends Component {
   render() {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Login Screen</Text>
+        <Text style={styles.text}>Terms and services</Text>
       </View>
     )
   }

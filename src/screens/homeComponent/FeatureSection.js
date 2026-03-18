@@ -19,7 +19,7 @@ const FEATURES = [
     {
         icon: require("../../../assets/images/features/Fast.png"),
         title: 'Fast & Effortless',
-        desc: 'CloudExpress is built for speed and simplicity—upload, share, and deliver large files without delays or complicated steps.',
+        desc: 'CloudExpress is built for speed and simplicity-upload, share, and deliver large files without delays or complicated steps.',
     },
     {
         icon: require("../../../assets/images/features/videos.png"),

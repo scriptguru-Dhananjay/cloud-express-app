@@ -24,7 +24,7 @@ function CloudExpressLogo() {
     <Image
       source={require('../../../assets/images/logo/logo-dark.png')}
       style={{
-        height: 32,
+        height: 40,
         width: 120,
         resizeMode: 'contain',
       }}
@@ -57,11 +57,11 @@ function CloseIcon({ color = '#333' }) {
 //  Nav item
 const NAV_ITEMS = [
     { label: 'Home', route: '/' },
-    { label: 'Transfer Files', route: '/(tabs)/transfer' },
-    { label: 'Pricing', route: '/(tabs)/pricing' },
-    { label: 'About Us', route: '/(tabs)/about' },
-    { label: 'Blog', route: '/(tabs)/blog' },
-    { label: 'Contact Us', route: '/(tabs)/contact' },
+    { label: 'Transfer Files', route: '/' },
+    { label: 'Pricing', route: '/' },
+    { label: 'About Us', route: '/' },
+    { label: 'Blog', route: '/' },
+    { label: 'Contact Us', route: '/' },
 ];
 
 // Drawer 
@@ -115,9 +115,9 @@ function Drawer({ visible, onClose }) {
                 <SafeAreaView style={{ flex: 1 }}>
                     {/* Drawer header */}
                     <View style={drawerStyles.drawerHeader}>
-                        <CloudExpressLogo size={30} />
+                        <CloudExpressLogo  />
                         <TouchableOpacity onPress={onClose} style={drawerStyles.closeBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                            <CloseIcon color="#333" />
+                            <CloseIcon color="black" />
                         </TouchableOpacity>
                     </View>
 
@@ -142,7 +142,7 @@ function Drawer({ visible, onClose }) {
                     <View style={drawerStyles.authButtons}>
                         <TouchableOpacity
                             style={drawerStyles.loginBtn}
-                            onPress={() => handleNav('/(auth)/login')}
+                            onPress={() => handleNav('/login')}
                             activeOpacity={0.7}
                         >
                             <Text style={drawerStyles.loginTxt}>Login</Text>
@@ -150,7 +150,7 @@ function Drawer({ visible, onClose }) {
 
                         <TouchableOpacity
                             style={drawerStyles.signupBtn}
-                            onPress={() => handleNav('/(auth)/register')}
+                            onPress={() => handleNav('/register')}
                             activeOpacity={0.8}
                         >
                             <Text style={drawerStyles.signupTxt}>Sign Up</Text>
@@ -218,8 +218,8 @@ const drawerStyles = StyleSheet.create({
     },
     loginBtn: {
         width: '100%',
-        height: 54,
-        borderRadius: 12,
+        height: 36,
+        borderRadius: 8,
         borderWidth: 1.5,
         borderColor: '#d1d5db',
         backgroundColor: '#fff',
@@ -233,8 +233,8 @@ const drawerStyles = StyleSheet.create({
     },
     signupBtn: {
         width: '100%',
-        height: 54,
-        borderRadius: 12,
+        height: 36,
+        borderRadius: 8,
         backgroundColor: '#E4853E',
         alignItems: 'center',
         justifyContent: 'center',
@@ -250,26 +250,25 @@ const drawerStyles = StyleSheet.create({
     },
 });
 
-// ── Main Header Component ───────────────────────────────────────────────────
+//  Main Header Component 
+
 export default function Header() {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     return (
         <>
             <View style={styles.header}>
-                <SafeAreaView edges={['top']} style={styles.safeArea}>
-                    <View style={styles.inner}>
-                        <CloudExpressLogo size={34} />
-                        <TouchableOpacity
-                            onPress={() => setDrawerOpen(true)}
-                            style={styles.menuBtn}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                            activeOpacity={0.7}
-                        >
-                            <HamburgerIcon color="#fff" />
-                        </TouchableOpacity>
-                    </View>
-                </SafeAreaView>
+                <View style={styles.inner}>
+                    <CloudExpressLogo />
+                    <TouchableOpacity
+                        onPress={() => setDrawerOpen(true)}
+                        style={styles.menuBtn}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        activeOpacity={0.7}
+                    >
+                        <HamburgerIcon color="#fff" />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)} />
@@ -285,17 +284,14 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.2,
         shadowRadius: 8,
         elevation: 6,
-        zIndex: 100,
-    },
-    safeArea: {
-        backgroundColor: 'transparent',
+        zIndex: 10,
     },
     inner: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 18,
-        paddingVertical: 14,
+        paddingVertical: 20,   
     },
     menuBtn: {
         padding: 4,

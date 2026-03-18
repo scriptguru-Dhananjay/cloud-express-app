@@ -1,5 +1,3 @@
-import 'react-native-get-random-values';
-
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRef, useState } from 'react';
@@ -11,6 +9,8 @@ import {
     Text, TextInput, TouchableOpacity,
     View
 } from 'react-native';
+import RNBlobUtil from 'react-native-blob-util';
+import 'react-native-get-random-values';
 import Svg, { Path } from "react-native-svg";
 import { v4 as uuidv4 } from 'uuid';
 
@@ -81,7 +81,7 @@ export default function CloudExpressUpload() {
 
     const [files, setFiles] = useState([]);
     const [overallStatus, setOverallStatus] = useState('idle');
-    const [screen, setScreen] = useState('upload'); // 'upload' | 'email'
+    const [screen, setScreen] = useState('upload'); 
     const [recipientEmail, setRecipientEmail] = useState('');
     const [senderEmail, setSenderEmail] = useState('');
     const fileControlsRef = useRef({});
@@ -247,77 +247,92 @@ export default function CloudExpressUpload() {
 
     const uploadInChunks = async (fileUri, fileName, fileSize, uid, mimeType, fileIndex) => {
 
-        console.log(` Chunk upload started: ${fileName}`);
+    console.log(`Chunk upload started: ${fileName}`);
 
-        const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-        console.log(`Total chunks: ${totalChunks}`);
+    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+    console.log(`Total chunks: ${totalChunks}`);
 
-        for (let index = 0; index < totalChunks; index++) {
+    for (let index = 0; index < totalChunks; index++) {
 
-            const cancelled = await checkPauseOrCancel(fileIndex);
-            if (cancelled) return false;
+        const cancelled = await checkPauseOrCancel(fileIndex);
+        if (cancelled) return false;
 
-            try {
-                const offset = index * CHUNK_SIZE;
-                const length = Math.min(CHUNK_SIZE, fileSize - offset);
+        try {
+            const offset = index * CHUNK_SIZE;
+            const length = Math.min(CHUNK_SIZE, fileSize - offset);
 
-                console.log(` Chunk ${index + 1}/${totalChunks} | Offset=${offset} | Size=${length}`);
+            console.log(`Chunk ${index + 1}/${totalChunks}`);
 
-                const tempUri = `${FileSystem.cacheDirectory}chunk_${fileIndex}_${index}_${uid}.tmp`;
+            // 🔹 Create temp chunk file (keep your existing logic)
+            const tempUri = `${FileSystem.cacheDirectory}chunk_${fileIndex}_${index}_${uid}.tmp`;
 
-                const base64Data = await FileSystem.readAsStringAsync(fileUri, {
-                    encoding: 'base64', position: offset, length,
-                }).catch(async () => {
-                    console.log(" Fallback full read used");
-                    const full = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-                    return full.substring(Math.floor(offset / 3) * 4, Math.floor(offset / 3) * 4 + Math.ceil(length / 3) * 4);
-                });
+            const base64Data = await FileSystem.readAsStringAsync(fileUri, {
+                encoding: 'base64',
+                position: offset,
+                length,
+            }).catch(async () => {
+                console.log("Fallback full read used");
+                const full = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+                return full.substring(
+                    Math.floor(offset / 3) * 4,
+                    Math.floor(offset / 3) * 4 + Math.ceil(length / 3) * 4
+                );
+            });
 
-                await FileSystem.writeAsStringAsync(tempUri, base64Data, { encoding: 'base64' });
+            await FileSystem.writeAsStringAsync(tempUri, base64Data, { encoding: 'base64' });
 
-                const formData = new FormData();
-                formData.append('chunk-index', index.toString());
-                formData.append('total-chunk', totalChunks.toString());
-                formData.append('chunk-size', length.toString());
-                formData.append('uploadFiles', { uri: tempUri, name: fileName, type: mimeType });
-                formData.append('fileName', fileName);
-                formData.append('bucketSize', fileSize.toString());
-                formData.append('totalFiles', '1');
-                formData.append('uid', uid);
-                formData.append('from', senderEmail || 'user@example.com');
-                formData.append('to', recipientEmail || 'recipient@example.com');
-                formData.append('fileData', JSON.stringify({ name: fileName, size: fileSize }));
-                formData.append('uploadDate', JSON.stringify({ start: Date.now() }));
-                formData.append('payment_id', '');
+            console.log(`Uploading chunk ${index + 1}`);
 
-                console.log(` Sending chunk ${index + 1}`);
+            // 🔥 REPLACED fetch → RNBlobUtil
+            await RNBlobUtil.fetch(
+                'POST',
+                UPLOAD_URL,
+                {
+                    'Content-Type': 'multipart/form-data',
+                },
+                [
+                    { name: 'chunk-index', data: index.toString() },
+                    { name: 'total-chunk', data: totalChunks.toString() },
+                    { name: 'chunk-size', data: length.toString() },
+                    { name: 'fileName', data: fileName },
+                    { name: 'bucketSize', data: fileSize.toString() },
+                    { name: 'totalFiles', data: '1' },
+                    { name: 'uid', data: uid },
+                    { name: 'from', data: senderEmail || 'user@example.com' },
+                    { name: 'to', data: recipientEmail || 'recipient@example.com' },
+                    {
+                        name: 'uploadFiles',
+                        filename: fileName,
+                        type: mimeType,
+                        data: RNBlobUtil.wrap(tempUri), // 🔥 important
+                    },
+                ]
+            )
+            .uploadProgress((written, total) => {
+                const chunkProgress = Math.round((written / total) * 100);
 
-                const response = await fetch(UPLOAD_URL, { method: 'POST', body: formData });
+                // Optional: fine-grained chunk progress
+                console.log(`Chunk ${index + 1} progress: ${chunkProgress}%`);
+            });
 
-                await FileSystem.deleteAsync(tempUri, { idempotent: true });
+            // Cleanup temp file
+            await FileSystem.deleteAsync(tempUri, { idempotent: true });
 
-                if (!response.ok) {
-                    const body = await response.text();
-                    console.log(" Server error:", body);
-                    Alert.alert("Error", `${fileName} failed at chunk ${index + 1}: ${body}`);
-                    return false;
-                }
+            const progress = Math.round(((index + 1) / totalChunks) * 100);
+            console.log(`Overall Progress ${fileName}: ${progress}%`);
 
-                const progress = Math.round(((index + 1) / totalChunks) * 100);
-                console.log(` Progress ${fileName}: ${progress}%`);
+            updateFile(fileIndex, { progress });
 
-                updateFile(fileIndex, { progress });
-
-            } catch (e) {
-                console.log("Chunk upload error:", e);
-                Alert.alert('Upload Error', `${fileName} chunk ${index}: ${e.message}`);
-                return false;
-            }
+        } catch (e) {
+            console.log("Chunk upload error:", e);
+            Alert.alert('Upload Error', `${fileName} chunk ${index}: ${e.message}`);
+            return false;
         }
+    }
 
-        console.log(`Finished uploading ${fileName}`);
-        return true;
-    };
+    console.log(`Finished uploading ${fileName}`);
+    return true;
+};
 
     const updateFile = (idx, changes) => {
         console.log(`Update file [${idx}]`, changes);

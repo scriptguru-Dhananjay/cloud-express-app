@@ -5,7 +5,7 @@ export default class TermService extends Component {
   render() {
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>Login Screen</Text>
+        <Text style={styles.text}>Privacy Policy</Text>
       </View>
     )
   }
