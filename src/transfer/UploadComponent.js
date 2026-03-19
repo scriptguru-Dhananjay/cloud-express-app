@@ -1,6 +1,7 @@
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useRef, useState } from 'react';
+import * as Notifications from 'expo-notifications';
+import { useEffect, useRef, useState } from 'react';
 import {
     Alert,
     Dimensions,
@@ -16,10 +17,29 @@ import { v4 as uuidv4 } from 'uuid';
 
 
 const CHUNK_SIZE = 1024 * 1024;
-const BASE_URL =  "https://pinnular-darin-unleasable.ngrok-free.dev";
+const BASE_URL = "https://pinnular-darin-unleasable.ngrok-free.dev";
 const UPLOAD_URL = `${BASE_URL}/api/FileUploader/Save`;
 const FREE_LIMIT_BYTES = 2.5 * 1024 * 1024 * 1024;
 const { width } = Dimensions.get('window');
+
+
+
+// Controls how notifications behave when the app is in the foreground
+Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+        shouldShowAlert: false, 
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+    }),
+});
+
+// Requests notification 
+async function registerForNotifications() {
+    const { status } = await Notifications.requestPermissionsAsync();
+    if (status !== 'granted') {
+        console.warn('Notification permission denied');
+    }
+}
 
 
 if (__DEV__) {
@@ -30,7 +50,8 @@ if (__DEV__) {
     });
 }
 
-// Background 
+
+// Background File Type Icons 
 const BG_ICONS = [
     { label: 'MP4', color: "#E4853E", top: 30, left: 20, rotate: '-15deg', size: 64 },
     { label: 'ZIP', color: '#c0d8f0', top: 20, right: 30, rotate: '12deg', size: 72 },
@@ -68,7 +89,8 @@ const bgIconStyles = StyleSheet.create({
     label: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
 });
 
-// Format bytes helper 
+
+//  Format Bytes Helper 
 function formatBytes(bytes) {
     if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
     if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
@@ -76,70 +98,78 @@ function formatBytes(bytes) {
     return bytes + ' B';
 }
 
+
 //  Main Component 
 export default function CloudExpressUpload() {
 
     const [files, setFiles] = useState([]);
     const [overallStatus, setOverallStatus] = useState('idle');
-    const [screen, setScreen] = useState('upload'); 
+    const [screen, setScreen] = useState('upload');
     const [recipientEmail, setRecipientEmail] = useState('');
     const [senderEmail, setSenderEmail] = useState('');
     const fileControlsRef = useRef({});
     const currentUidRef = useRef(null);
+    const notifIdRef = useRef(null);       
 
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
     const usedPercent = Math.min((totalSize / FREE_LIMIT_BYTES) * 100, 100);
 
-    //  Pick Files 
+    // Request notification permissions on mount
+    useEffect(() => {
+        registerForNotifications();
+    }, []);
+
+
+    // Pick Files 
     const handlePickFiles = async () => {
-    console.log(" Opening picker...");
-    try {
-        const result = await DocumentPicker.getDocumentAsync({
-            copyToCacheDirectory: true,
-            multiple: true,
-        });
-
-        console.log("Picker result:", result);
-
-        if (result.canceled) {
-            console.log(" Picker cancelled");
-            return;
-        }
-
-        setFiles(prev => {
-            const startIdx = prev.length; 
-            const newFiles = result.assets.map((asset, idx) => ({
-                id: startIdx + idx,
-                uri: asset.uri,
-                name: asset.name,
-                size: asset.size,
-                mimeType: asset.mimeType || 'application/octet-stream',
-                status: 'pending',
-                progress: 0,
-            }));
-
-            newFiles.forEach((_, idx) => {
-                fileControlsRef.current[startIdx + idx] = {
-                    isPaused: false,
-                    isCancelled: false,
-                    resume: null,
-                };
+        console.log("Opening picker...");
+        try {
+            const result = await DocumentPicker.getDocumentAsync({
+                copyToCacheDirectory: true,
+                multiple: true,
             });
 
-            return [...prev, ...newFiles]; 
-        });
+            console.log("Picker result:", result);
 
-        setOverallStatus('idle');
+            if (result.canceled) {
+                console.log("Picker cancelled");
+                return;
+            }
 
-    } catch (err) {
-        console.log(" Picker Error:", err);
-        Alert.alert('Picker Error', err.message);
-    }
-};
+            setFiles(prev => {
+                const startIdx = prev.length;
+                const newFiles = result.assets.map((asset, idx) => ({
+                    id: startIdx + idx,
+                    uri: asset.uri,
+                    name: asset.name,
+                    size: asset.size,
+                    mimeType: asset.mimeType || 'application/octet-stream',
+                    status: 'pending',
+                    progress: 0,
+                }));
 
-    //Start Upload 
+                newFiles.forEach((_, idx) => {
+                    fileControlsRef.current[startIdx + idx] = {
+                        isPaused: false,
+                        isCancelled: false,
+                        resume: null,
+                    };
+                });
+
+                return [...prev, ...newFiles];
+            });
+
+            setOverallStatus('idle');
+
+        } catch (err) {
+            console.log("Picker Error:", err);
+            Alert.alert('Picker Error', err.message);
+        }
+    };
+
+
+    // Start All Uploads 
     const handleStartAll = async () => {
-
         console.log("Starting upload...");
 
         if (files.length === 0) {
@@ -150,13 +180,24 @@ export default function CloudExpressUpload() {
 
         setOverallStatus('uploading');
 
+        //  Show uploading notification in status bar
+        notifIdRef.current = await Notifications.scheduleNotificationAsync({
+            content: {
+                title: 'Uploading files...',
+                body: `0% — 0/${files.length} file(s) done`,
+                sticky: true,        
+                autoDismiss: false,
+            },
+            trigger: null,          
+        });
+
         let uid;
         try {
             uid = uuidv4();
             console.log("UID:", uid);
         } catch (e) {
             uid = Date.now().toString(36) + Math.random().toString(36).substr(2);
-            console.log(" Fallback UID:", uid);
+            console.log("Fallback UID:", uid);
         }
         currentUidRef.current = uid;
 
@@ -164,10 +205,29 @@ export default function CloudExpressUpload() {
 
         console.log("All uploads complete");
         setOverallStatus('done');
+
+        // Update notification to Upload Complete
+        if (notifIdRef.current) {
+            await Notifications.scheduleNotificationAsync({
+                identifier: notifIdRef.current,
+                content: {
+                    title: 'Upload Complete!',
+                    body: `All ${files.length} file(s) uploaded successfully.`,
+                    autoDismiss: true,
+                },
+                trigger: null,
+            });
+            // Auto-dismiss the notification
+            setTimeout(() => {
+                Notifications.dismissNotificationAsync(notifIdRef.current);
+                notifIdRef.current = null;
+            }, 4000);
+        }
     };
 
-    const uploadFile = async (file, idx, uid) => {
 
+    // Upload 
+    const uploadFile = async (file, idx, uid) => {
         console.log(`Uploading file [${idx}]`, file);
 
         fileControlsRef.current[idx] = { isPaused: false, isCancelled: false, resume: null };
@@ -176,7 +236,7 @@ export default function CloudExpressUpload() {
 
         const success = await uploadInChunks(file.uri, file.name, file.size, uid, file.mimeType, idx);
 
-        console.log(` Upload result for ${file.name}:`, success);
+        console.log(`Upload result for ${file.name}:`, success);
 
         if (success) updateFile(idx, { status: 'done', progress: 100 });
         else if (fileControlsRef.current[idx]?.isCancelled)
@@ -184,16 +244,18 @@ export default function CloudExpressUpload() {
         else updateFile(idx, { status: 'error' });
     };
 
+
+    //  Pause 
     const handlePauseFile = (idx) => {
-        console.log(` Pause file [${idx}]`);
+        console.log(`Pause file [${idx}]`);
         if (fileControlsRef.current[idx]) {
             fileControlsRef.current[idx].isPaused = true;
             updateFile(idx, { status: 'paused' });
         }
     };
-
+ //  Resume 
     const handleResumeFile = (idx) => {
-        console.log(` Resume file [${idx}]`);
+        console.log(`Resume file [${idx}]`);
         const ctrl = fileControlsRef.current[idx];
         if (ctrl) {
             ctrl.isPaused = false;
@@ -201,26 +263,25 @@ export default function CloudExpressUpload() {
             if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
         }
     };
-
+ //   Cancel 
     const handleCancelFile = (idx) => {
-    const ctrl = fileControlsRef.current[idx];
-    const file = files[idx];
+        const ctrl = fileControlsRef.current[idx];
+        const file = files[idx];
 
-    if (ctrl) {
-        ctrl.isCancelled = true;
-        ctrl.isPaused = false;
-        if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
-    }
+        if (ctrl) {
+            ctrl.isCancelled = true;
+            ctrl.isPaused = false;
+            if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
+        }
 
-    
-    if (file && file.status === 'uploading' || file?.status === 'paused') {
-        fetch(`${BASE_URL}/api/FileUploader/Cancel`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: currentUidRef.current, fileName: file.name }),
-        }).catch(() => {}); 
-    }
-};
+        if (file && file.status === 'uploading' || file?.status === 'paused') {
+            fetch(`${BASE_URL}/api/FileUploader/Cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uid: currentUidRef.current, fileName: file.name }),
+            }).catch(() => {});
+        }
+    };
 
     const handleRemoveFile = (idx) => {
         setFiles(prev => prev.filter((_, i) => i !== idx));
@@ -233,7 +294,7 @@ export default function CloudExpressUpload() {
             if (!ctrl) { resolve(false); return; }
 
             if (ctrl.isCancelled) {
-                console.log(` File [${idx}] cancelled`);
+                console.log(`File [${idx}] cancelled`);
                 resolve(true);
                 return;
             }
@@ -245,100 +306,122 @@ export default function CloudExpressUpload() {
         });
     };
 
+
+    //  Chunk Upload 
     const uploadInChunks = async (fileUri, fileName, fileSize, uid, mimeType, fileIndex) => {
+        console.log(`Chunk upload started: ${fileName}`);
 
-    console.log(`Chunk upload started: ${fileName}`);
+        const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+        console.log(`Total chunks: ${totalChunks}`);
 
-    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-    console.log(`Total chunks: ${totalChunks}`);
+        for (let index = 0; index < totalChunks; index++) {
 
-    for (let index = 0; index < totalChunks; index++) {
+            const cancelled = await checkPauseOrCancel(fileIndex);
+            if (cancelled) return false;
 
-        const cancelled = await checkPauseOrCancel(fileIndex);
-        if (cancelled) return false;
+            try {
+                const offset = index * CHUNK_SIZE;
+                const length = Math.min(CHUNK_SIZE, fileSize - offset);
 
-        try {
-            const offset = index * CHUNK_SIZE;
-            const length = Math.min(CHUNK_SIZE, fileSize - offset);
+                console.log(`Chunk ${index + 1}/${totalChunks}`);
 
-            console.log(`Chunk ${index + 1}/${totalChunks}`);
+                const tempUri = `${FileSystem.cacheDirectory}chunk_${fileIndex}_${index}_${uid}.tmp`;
 
-            // 🔹 Create temp chunk file (keep your existing logic)
-            const tempUri = `${FileSystem.cacheDirectory}chunk_${fileIndex}_${index}_${uid}.tmp`;
+                const base64Data = await FileSystem.readAsStringAsync(fileUri, {
+                    encoding: 'base64',
+                    position: offset,
+                    length,
+                }).catch(async () => {
+                    console.log("Fallback full read used");
+                    const full = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
+                    return full.substring(
+                        Math.floor(offset / 3) * 4,
+                        Math.floor(offset / 3) * 4 + Math.ceil(length / 3) * 4
+                    );
+                });
 
-            const base64Data = await FileSystem.readAsStringAsync(fileUri, {
-                encoding: 'base64',
-                position: offset,
-                length,
-            }).catch(async () => {
-                console.log("Fallback full read used");
-                const full = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
-                return full.substring(
-                    Math.floor(offset / 3) * 4,
-                    Math.floor(offset / 3) * 4 + Math.ceil(length / 3) * 4
-                );
-            });
+                await FileSystem.writeAsStringAsync(tempUri, base64Data, { encoding: 'base64' });
 
-            await FileSystem.writeAsStringAsync(tempUri, base64Data, { encoding: 'base64' });
+                console.log(`Uploading chunk ${index + 1}`);
 
-            console.log(`Uploading chunk ${index + 1}`);
+                await RNBlobUtil.fetch(
+                    'POST',
+                    UPLOAD_URL,
+                    { 'Content-Type': 'multipart/form-data' },
+                    [
+                        { name: 'chunk-index', data: index.toString() },
+                        { name: 'total-chunk', data: totalChunks.toString() },
+                        { name: 'chunk-size', data: length.toString() },
+                        { name: 'fileName', data: fileName },
+                        { name: 'bucketSize', data: fileSize.toString() },
+                        { name: 'totalFiles', data: '1' },
+                        { name: 'uid', data: uid },
+                        { name: 'from', data: senderEmail || 'user@example.com' },
+                        { name: 'to', data: recipientEmail || 'recipient@example.com' },
+                        {
+                            name: 'uploadFiles',
+                            filename: fileName,
+                            type: mimeType,
+                            data: RNBlobUtil.wrap(tempUri),
+                        },
+                    ]
+                )
+                .uploadProgress((written, total) => {
+                    const chunkProgress = Math.round((written / total) * 100);
+                    console.log(`Chunk ${index + 1} progress: ${chunkProgress}%`);
+                });
 
-            // 🔥 REPLACED fetch → RNBlobUtil
-            await RNBlobUtil.fetch(
-                'POST',
-                UPLOAD_URL,
-                {
-                    'Content-Type': 'multipart/form-data',
-                },
-                [
-                    { name: 'chunk-index', data: index.toString() },
-                    { name: 'total-chunk', data: totalChunks.toString() },
-                    { name: 'chunk-size', data: length.toString() },
-                    { name: 'fileName', data: fileName },
-                    { name: 'bucketSize', data: fileSize.toString() },
-                    { name: 'totalFiles', data: '1' },
-                    { name: 'uid', data: uid },
-                    { name: 'from', data: senderEmail || 'user@example.com' },
-                    { name: 'to', data: recipientEmail || 'recipient@example.com' },
-                    {
-                        name: 'uploadFiles',
-                        filename: fileName,
-                        type: mimeType,
-                        data: RNBlobUtil.wrap(tempUri), // 🔥 important
-                    },
-                ]
-            )
-            .uploadProgress((written, total) => {
-                const chunkProgress = Math.round((written / total) * 100);
+                await FileSystem.deleteAsync(tempUri, { idempotent: true });
 
-                // Optional: fine-grained chunk progress
-                console.log(`Chunk ${index + 1} progress: ${chunkProgress}%`);
-            });
+                const progress = Math.round(((index + 1) / totalChunks) * 100);
+                console.log(`Overall Progress ${fileName}: ${progress}%`);
 
-            // Cleanup temp file
-            await FileSystem.deleteAsync(tempUri, { idempotent: true });
+                updateFile(fileIndex, { progress });
 
-            const progress = Math.round(((index + 1) / totalChunks) * 100);
-            console.log(`Overall Progress ${fileName}: ${progress}%`);
-
-            updateFile(fileIndex, { progress });
-
-        } catch (e) {
-            console.log("Chunk upload error:", e);
-            Alert.alert('Upload Error', `${fileName} chunk ${index}: ${e.message}`);
-            return false;
+            } catch (e) {
+                console.log("Chunk upload error:", e);
+                Alert.alert('Upload Error', `${fileName} chunk ${index}: ${e.message}`);
+                return false;
+            }
         }
-    }
 
-    console.log(`Finished uploading ${fileName}`);
-    return true;
-};
-
-    const updateFile = (idx, changes) => {
-        console.log(`Update file [${idx}]`, changes);
-        setFiles(prev => prev.map((f, i) => i === idx ? { ...f, ...changes } : f));
+        console.log(`Finished uploading ${fileName}`);
+        return true;
     };
 
+
+    // Update File State + Notification
+    const updateFile = (idx, changes) => {
+        console.log(`Update file [${idx}]`, changes);
+
+        setFiles(prev => {
+            const updated = prev.map((f, i) => i === idx ? { ...f, ...changes } : f);
+
+            //  Update status bar notification with overall progress
+            if (notifIdRef.current && changes.progress !== undefined) {
+                const totalProgress = Math.round(
+                    updated.reduce((sum, f) => sum + (f.progress || 0), 0) / updated.length
+                );
+                const doneCount = updated.filter(f => f.status === 'done').length;
+
+                Notifications.scheduleNotificationAsync({
+                    identifier: notifIdRef.current,
+                    content: {
+                        title: ' Uploading files...',
+                        body: `${totalProgress}% — ${doneCount}/${updated.length} file(s) done`,
+                        sticky: true,
+                        autoDismiss: false,
+                    },
+                    trigger: null,
+                });
+            }
+
+            return updated;
+        });
+    };
+
+
+    //  Helpers 
     const getFileExt = (name) => (name.split('.').pop() || 'FILE').toUpperCase().slice(0, 4);
 
     const statusColor = (s) => {
@@ -348,7 +431,6 @@ export default function CloudExpressUpload() {
         return '#F97316';
     };
 
-    
     const handleNextPress = () => {
         if (files.length === 0) {
             handlePickFiles();
@@ -357,7 +439,6 @@ export default function CloudExpressUpload() {
         }
     };
 
-    
     const handleSendPress = () => {
         if (!recipientEmail.trim()) {
             Alert.alert('Missing Email', 'Please enter recipient\'s email.');
@@ -371,14 +452,12 @@ export default function CloudExpressUpload() {
         handleStartAll();
     };
 
-    
 
-    // Email Screen
+    //  Email Screen 
     if (screen === 'email') {
         return (
             <View style={{ width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
                 <View style={emailStyles.card}>
-                    {/* Background icons  */}
                     {BG_ICONS.map((ic, i) => (
                         <FileTypeIcon
                             key={i}
@@ -418,12 +497,10 @@ export default function CloudExpressUpload() {
                     </View>
                 </View>
 
-                {/* Send Button */}
                 <TouchableOpacity style={emailStyles.sendBtn} onPress={handleSendPress} activeOpacity={0.88}>
                     <Text style={emailStyles.sendBtnTxt}>Send</Text>
                 </TouchableOpacity>
 
-                {/* Back button*/}
                 <TouchableOpacity style={emailStyles.backBtn} onPress={() => setScreen('upload')}>
                     <Text style={emailStyles.backBtnTxt}>Back</Text>
                 </TouchableOpacity>
@@ -431,14 +508,13 @@ export default function CloudExpressUpload() {
         );
     }
 
-    // Upload Screen
+
+    // Upload Screen 
     return (
         <View style={{ width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
 
-            {/*  Main card */}
             <View style={s.card}>
 
-                {/* Background icons */}
                 {BG_ICONS.map((ic, i) => (
                     <FileTypeIcon
                         key={i}
@@ -459,7 +535,6 @@ export default function CloudExpressUpload() {
                         onPress={overallStatus === 'idle' ? handlePickFiles : undefined}
                         activeOpacity={0.85}
                     >
-                        {/* Upload icon */}
                         <View style={s.uploadIcon}>
                             <Svg
                                 width={48}
@@ -479,7 +554,6 @@ export default function CloudExpressUpload() {
                         <Text style={s.dropText}>UPLOAD FILE</Text>
                     </TouchableOpacity>
                 ) : (
-                    
                     <View style={s.dropZoneFiles}>
                         <ScrollView
                             style={{ width: '100%' }}
@@ -491,14 +565,12 @@ export default function CloudExpressUpload() {
                             {files.map((file, idx) => (
                                 <View key={idx} style={s.fileRow}>
 
-                                    {/* File badge */}
                                     <View style={[s.extBadge, { borderColor: statusColor(file.status) }]}>
                                         <Text style={[s.extText, { color: statusColor(file.status) }]}>
                                             {getFileExt(file.name)}
                                         </Text>
                                     </View>
 
-                                    {/* File info */}
                                     <View style={{ flex: 1, marginLeft: 10 }}>
                                         <Text style={s.fileName} numberOfLines={1}>{file.name}</Text>
                                         <Text style={s.fileSizeText}>
@@ -509,7 +581,6 @@ export default function CloudExpressUpload() {
                                             {file.status === 'error' ? '  \u2022  Error' : ''}
                                         </Text>
 
-                                        {/* Progress bar */}
                                         {['uploading', 'paused', 'done'].includes(file.status) && (
                                             <View style={s.miniTrack}>
                                                 <View style={[s.miniFill, {
@@ -519,7 +590,6 @@ export default function CloudExpressUpload() {
                                             </View>
                                         )}
 
-                                        {/* Pause / Resume / Cancel buttons */}
                                         {['uploading', 'paused'].includes(file.status) && (
                                             <View style={s.fileBtns}>
                                                 {file.status === 'uploading' && (
@@ -539,7 +609,6 @@ export default function CloudExpressUpload() {
                                         )}
                                     </View>
 
-                                    {/* Remove button */}
                                     {['pending', 'cancelled', 'done', 'error'].includes(file.status) && overallStatus === 'idle' && (
                                         <TouchableOpacity onPress={() => handleRemoveFile(idx)} style={s.removeBtn}>
                                             <Text style={{ color: '#aaa', fontSize: 16 }}>✕</Text>
@@ -548,7 +617,6 @@ export default function CloudExpressUpload() {
                                 </View>
                             ))}
 
-                            {/* Add more files button */}
                             {overallStatus === 'idle' && (
                                 <TouchableOpacity style={s.addMoreBtn} onPress={handlePickFiles}>
                                     <Text style={s.addMoreTxt}>+ Add more files</Text>
@@ -558,7 +626,6 @@ export default function CloudExpressUpload() {
                     </View>
                 )}
 
-                {/*  Bottom bar  */}
                 <View style={s.bottomBar}>
                     <View style={s.bottomBarRow}>
                         <Text style={s.bottomBarLeft}>
@@ -568,15 +635,12 @@ export default function CloudExpressUpload() {
                             {formatBytes(FREE_LIMIT_BYTES - totalSize)} FREE
                         </Text>
                     </View>
-
-                    {/* Storage usage bar */}
                     <View style={s.storageTrack}>
                         <View style={[s.storageFill, { width: `${usedPercent}%` }]} />
                     </View>
                 </View>
             </View>
 
-            {/* Next / Upload button  */}
             {overallStatus === 'idle' && files.length > 0 && (
                 <TouchableOpacity style={s.nextBtn} onPress={handleNextPress} activeOpacity={0.88}>
                     <Text style={s.nextBtnTxt}>Next</Text>
@@ -598,7 +662,12 @@ export default function CloudExpressUpload() {
             {overallStatus === 'done' && (
                 <TouchableOpacity
                     style={s.nextBtn}
-                    onPress={() => { setFiles([]); setOverallStatus('idle'); setRecipientEmail(''); setSenderEmail(''); }}
+                    onPress={() => {
+                        setFiles([]);
+                        setOverallStatus('idle');
+                        setRecipientEmail('');
+                        setSenderEmail('');
+                    }}
                     activeOpacity={0.88}
                 >
                     <Text style={s.nextBtnTxt}>Upload More Files</Text>
@@ -609,9 +678,9 @@ export default function CloudExpressUpload() {
     );
 }
 
-// Email  Styles
+
+//Email Styles
 const emailStyles = StyleSheet.create({
-    
     inputContainer: {
         width: '100%',
         backgroundColor: '#fff',
@@ -665,7 +734,8 @@ const emailStyles = StyleSheet.create({
     },
 });
 
-// Upload Styles 
+
+// ─── Upload Styles ─────────────────────────────────────────────────────────────
 const s = StyleSheet.create({
     card: {
         width: '100%',
@@ -678,22 +748,17 @@ const s = StyleSheet.create({
         elevation: 8,
         minHeight: 420,
     },
-
-    
     dropZoneEmpty: {
         minHeight: 340,
         alignItems: 'center',
         justifyContent: 'center',
         padding: 20,
     },
-
-   
     dropZoneFiles: {
         minHeight: 340,
-        maxHeight: 340,          
+        maxHeight: 340,
         padding: 12,
     },
-
     uploadIcon: {
         marginBottom: 12,
         opacity: 0.5,
