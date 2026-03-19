@@ -41,6 +41,34 @@ async function registerForNotifications() {
     }
 }
 
+async function setupNotificationCategories() {
+    await Notifications.setNotificationCategoryAsync('upload_uploading', [
+        {
+            identifier: 'pause_all',
+            buttonTitle: 'Pause',
+            options: { isDestructive: false, isAuthenticationRequired: false ,opensAppToForeground: false},
+        },
+        {
+            identifier: 'cancel_all',
+            buttonTitle: 'Cancel',
+            options: { isDestructive: true, isAuthenticationRequired: false , opensAppToForeground: false},
+        },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync('upload_paused', [
+        {
+            identifier: 'resume_all',
+            buttonTitle: 'Resume',
+            options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+            identifier: 'cancel_all',
+            buttonTitle: 'Cancel',
+            options: { isDestructive: true, isAuthenticationRequired: false },
+        },
+    ]);
+}
+
 
 if (__DEV__) {
     const originalHandler = global.ErrorUtils?.getGlobalHandler?.();
@@ -111,14 +139,95 @@ export default function CloudExpressUpload() {
     const currentUidRef = useRef(null);
     const notifIdRef = useRef(null);       
 
+    const notifCategoryRef = useRef('upload_uploading'); // tracks current category
+
+const handlePauseAll = () => {
+    files.forEach((_, idx) => {
+        if (fileControlsRef.current[idx] && !fileControlsRef.current[idx].isPaused) {
+            fileControlsRef.current[idx].isPaused = true;
+            updateFile(idx, { status: 'paused' });
+        }
+    });
+    notifCategoryRef.current = 'upload_paused';
+    // update notification category immediately
+    if (notifIdRef.current) {
+        Notifications.scheduleNotificationAsync({
+            identifier: notifIdRef.current,
+            content: {
+                title: 'Upload Paused',
+                body: 'Tap Resume to continue.',
+                sticky: true,
+                autoDismiss: false,
+                categoryIdentifier: 'upload_paused',
+            },
+            trigger: null,
+        });
+    }
+};
+
+const handleResumeAll = () => {
+    files.forEach((file, idx) => {
+        const ctrl = fileControlsRef.current[idx];
+        if (ctrl && ctrl.isPaused) {
+            ctrl.isPaused = false;
+            updateFile(idx, { status: 'uploading' });
+            if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
+        }
+    });
+    notifCategoryRef.current = 'upload_uploading';
+    if (notifIdRef.current) {
+        Notifications.scheduleNotificationAsync({
+            identifier: notifIdRef.current,
+            content: {
+                title: 'Uploading files...',
+                body: 'Resumed.',
+                sticky: true,
+                autoDismiss: false,
+                categoryIdentifier: 'upload_uploading',
+            },
+            trigger: null,
+        });
+    }
+};
+
+const handleCancelAll = () => {
+    files.forEach((file, idx) => {
+        handleCancelFile(idx);
+    });
+    if (notifIdRef.current) {
+        Notifications.dismissNotificationAsync(notifIdRef.current);
+        notifIdRef.current = null;
+    }
+    setOverallStatus('idle');
+};
+
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
     const usedPercent = Math.min((totalSize / FREE_LIMIT_BYTES) * 100, 100);
 
-    // Request notification permissions on mount
-    useEffect(() => {
-        registerForNotifications();
-    }, []);
 
+   // AFTER — registers once, reads handlers via stable refs
+const handlePauseAllRef  = useRef(null);
+const handleResumeAllRef = useRef(null);
+const handleCancelAllRef = useRef(null);
+
+// Keep refs pointing to latest versions of handlers
+handlePauseAllRef.current  = handlePauseAll;
+handleResumeAllRef.current = handleResumeAll;
+handleCancelAllRef.current = handleCancelAll;
+
+useEffect(() => {
+    registerForNotifications();
+    setupNotificationCategories();
+
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+        const action = response.actionIdentifier;
+        if (action === 'pause_all')  handlePauseAllRef.current?.();
+        if (action === 'resume_all') handleResumeAllRef.current?.();
+        if (action === 'cancel_all') handleCancelAllRef.current?.();
+    });
+
+    return () => sub.remove();
+}, []); // ← empty array: registers ONCE only
 
     // Pick Files 
     const handlePickFiles = async () => {
@@ -187,9 +296,11 @@ export default function CloudExpressUpload() {
                 body: `0% — 0/${files.length} file(s) done`,
                 sticky: true,        
                 autoDismiss: false,
+                categoryIdentifier: 'upload_uploading',
             },
             trigger: null,          
         });
+        notifCategoryRef.current = 'upload_uploading';
 
         let uid;
         try {
@@ -214,6 +325,7 @@ export default function CloudExpressUpload() {
                     title: 'Upload Complete!',
                     body: `All ${files.length} file(s) uploaded successfully.`,
                     autoDismiss: true,
+                    categoryIdentifier: notifCategoryRef.current,
                 },
                 trigger: null,
             });
@@ -411,6 +523,7 @@ export default function CloudExpressUpload() {
                         body: `${totalProgress}% — ${doneCount}/${updated.length} file(s) done`,
                         sticky: true,
                         autoDismiss: false,
+                        categoryIdentifier: notifCategoryRef.current,
                     },
                     trigger: null,
                 });
