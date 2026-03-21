@@ -17,23 +17,27 @@ import { v4 as uuidv4 } from 'uuid';
 
 
 const CHUNK_SIZE = 1024 * 1024;
-const BASE_URL = "https://pinnular-darin-unleasable.ngrok-free.dev";
+const BASE_URL = "https://cloud-express-app-backend.onrender.com";
 const UPLOAD_URL = `${BASE_URL}/api/FileUploader/Save`;
 const FREE_LIMIT_BYTES = 2.5 * 1024 * 1024 * 1024;
 const { width } = Dimensions.get('window');
 
+const OVERALL_NOTIF_ID = 'overall_upload_progress';
+const OVERALL_CATEGORY_UPLOADING = 'overall_uploading';
+const OVERALL_CATEGORY_PAUSED    = 'overall_paused';
+const OVERALL_CATEGORY_DONE      = 'overall_done';
 
 
 // Controls how notifications behave when the app is in the foreground
 Notifications.setNotificationHandler({
     handleNotification: async () => ({
-        shouldShowAlert: false, 
+        shouldShowAlert: false,
         shouldPlaySound: false,
         shouldSetBadge: false,
     }),
 });
 
-// Requests notification 
+// Requests notification permission
 async function registerForNotifications() {
     const { status } = await Notifications.requestPermissionsAsync();
     if (status !== 'granted') {
@@ -41,30 +45,39 @@ async function registerForNotifications() {
     }
 }
 
-async function setupNotificationCategories() {
-    await Notifications.setNotificationCategoryAsync('upload_uploading', [
+// Register overall notification categories with Pause/Resume/Cancel actions
+async function registerOverallCategories() {
+    await Notifications.setNotificationCategoryAsync(OVERALL_CATEGORY_UPLOADING, [
         {
-            identifier: 'pause_all',
-            buttonTitle: 'Pause',
-            options: { isDestructive: false, isAuthenticationRequired: false ,opensAppToForeground: false},
-        },
-        {
-            identifier: 'cancel_all',
-            buttonTitle: 'Cancel',
-            options: { isDestructive: true, isAuthenticationRequired: false , opensAppToForeground: false},
-        },
-    ]);
-
-    await Notifications.setNotificationCategoryAsync('upload_paused', [
-        {
-            identifier: 'resume_all',
-            buttonTitle: 'Resume',
+            identifier: 'overall_pause',
+            buttonTitle: 'Pause All',
             options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
         },
         {
-            identifier: 'cancel_all',
-            buttonTitle: 'Cancel',
-            options: { isDestructive: true, isAuthenticationRequired: false },
+            identifier: 'overall_cancel',
+            buttonTitle: 'Cancel All',
+            options: { isDestructive: true, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync(OVERALL_CATEGORY_PAUSED, [
+        {
+            identifier: 'overall_resume',
+            buttonTitle: 'Resume All',
+            options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+        {
+            identifier: 'overall_cancel',
+            buttonTitle: 'Cancel All',
+            options: { isDestructive: true, isAuthenticationRequired: false, opensAppToForeground: false },
+        },
+    ]);
+
+    await Notifications.setNotificationCategoryAsync(OVERALL_CATEGORY_DONE, [
+        {
+            identifier: 'overall_clear',
+            buttonTitle: 'Clear',
+            options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
         },
     ]);
 }
@@ -79,7 +92,7 @@ if (__DEV__) {
 }
 
 
-// Background File Type Icons 
+// Background File Type Icons
 const BG_ICONS = [
     { label: 'MP4', color: "#E4853E", top: 30, left: 20, rotate: '-15deg', size: 64 },
     { label: 'ZIP', color: '#c0d8f0', top: 20, right: 30, rotate: '12deg', size: 72 },
@@ -118,7 +131,7 @@ const bgIconStyles = StyleSheet.create({
 });
 
 
-//  Format Bytes Helper 
+// Format Bytes Helper
 function formatBytes(bytes) {
     if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
     if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
@@ -127,7 +140,7 @@ function formatBytes(bytes) {
 }
 
 
-//  Main Component 
+// Main Component
 export default function CloudExpressUpload() {
 
     const [files, setFiles] = useState([]);
@@ -137,99 +150,114 @@ export default function CloudExpressUpload() {
     const [senderEmail, setSenderEmail] = useState('');
     const fileControlsRef = useRef({});
     const currentUidRef = useRef(null);
-    const notifIdRef = useRef(null);       
 
-    const notifCategoryRef = useRef('upload_uploading'); // tracks current category
+    // Single overall-progress notification — no per-file notif IDs needed
+    const overallNotifScheduledRef = useRef(false);
 
-const handlePauseAll = () => {
-    files.forEach((_, idx) => {
-        if (fileControlsRef.current[idx] && !fileControlsRef.current[idx].isPaused) {
-            fileControlsRef.current[idx].isPaused = true;
-            updateFile(idx, { status: 'paused' });
-        }
-    });
-    notifCategoryRef.current = 'upload_paused';
-    // update notification category immediately
-    if (notifIdRef.current) {
-        Notifications.scheduleNotificationAsync({
-            identifier: notifIdRef.current,
-            content: {
-                title: 'Upload Paused',
-                body: 'Tap Resume to continue.',
-                sticky: true,
-                autoDismiss: false,
-                categoryIdentifier: 'upload_paused',
-            },
-            trigger: null,
-        });
-    }
-};
-
-const handleResumeAll = () => {
-    files.forEach((file, idx) => {
-        const ctrl = fileControlsRef.current[idx];
-        if (ctrl && ctrl.isPaused) {
-            ctrl.isPaused = false;
-            updateFile(idx, { status: 'uploading' });
-            if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
-        }
-    });
-    notifCategoryRef.current = 'upload_uploading';
-    if (notifIdRef.current) {
-        Notifications.scheduleNotificationAsync({
-            identifier: notifIdRef.current,
-            content: {
-                title: 'Uploading files...',
-                body: 'Resumed.',
-                sticky: true,
-                autoDismiss: false,
-                categoryIdentifier: 'upload_uploading',
-            },
-            trigger: null,
-        });
-    }
-};
-
-const handleCancelAll = () => {
-    files.forEach((file, idx) => {
-        handleCancelFile(idx);
-    });
-    if (notifIdRef.current) {
-        Notifications.dismissNotificationAsync(notifIdRef.current);
-        notifIdRef.current = null;
-    }
-    setOverallStatus('idle');
-};
+    const filesRef = useRef([]);
 
     const totalSize = files.reduce((sum, f) => sum + f.size, 0);
     const usedPercent = Math.min((totalSize / FREE_LIMIT_BYTES) * 100, 100);
 
+    // Refs so notification listener can always call the latest handler
+    const handlePauseAllRef   = useRef(null);
+    const handleResumeAllRef  = useRef(null);
+    const handleCancelAllRef  = useRef(null);
 
-   // AFTER — registers once, reads handlers via stable refs
-const handlePauseAllRef  = useRef(null);
-const handleResumeAllRef = useRef(null);
-const handleCancelAllRef = useRef(null);
+    useEffect(() => {
+        registerForNotifications();
+        registerOverallCategories();
 
-// Keep refs pointing to latest versions of handlers
-handlePauseAllRef.current  = handlePauseAll;
-handleResumeAllRef.current = handleResumeAll;
-handleCancelAllRef.current = handleCancelAll;
+        const sub = Notifications.addNotificationResponseReceivedListener(response => {
+            const action = response.actionIdentifier;
 
-useEffect(() => {
-    registerForNotifications();
-    setupNotificationCategories();
+            if (action === 'overall_pause')  handlePauseAllRef.current?.();
+            if (action === 'overall_resume') handleResumeAllRef.current?.();
+            if (action === 'overall_cancel') handleCancelAllRef.current?.();
+            if (action === 'overall_clear') {
+                Notifications.dismissNotificationAsync(OVERALL_NOTIF_ID);
+                overallNotifScheduledRef.current = false;
+            }
+        });
 
-    const sub = Notifications.addNotificationResponseReceivedListener(response => {
-        const action = response.actionIdentifier;
-        if (action === 'pause_all')  handlePauseAllRef.current?.();
-        if (action === 'resume_all') handleResumeAllRef.current?.();
-        if (action === 'cancel_all') handleCancelAllRef.current?.();
-    });
+        return () => sub.remove();
+    }, []);
 
-    return () => sub.remove();
-}, []); // ← empty array: registers ONCE only
 
-    // Pick Files 
+    // Overall notification helpers 
+
+    const showOverallNotification = async ({ title, body, categoryIdentifier, sticky = true }) => {
+        await Notifications.scheduleNotificationAsync({
+            identifier: OVERALL_NOTIF_ID,
+            content: {
+                title,
+                body,
+                sticky,
+                autoDismiss: !sticky,
+                categoryIdentifier,
+            },
+            trigger: null,
+        });
+        overallNotifScheduledRef.current = true;
+    };
+
+    const refreshOverallNotification = async (isPausedState = false, snapshot = null) => {
+        const allFiles = snapshot ?? filesRef.current;
+        if (!allFiles.length) return;
+
+        const totalFiles   = allFiles.length;
+        const doneCount    = allFiles.filter(f => f.status === 'done').length;
+        const cancelCount  = allFiles.filter(f => f.status === 'cancelled').length;
+        const errorCount   = allFiles.filter(f => f.status === 'error').length;
+
+        const activeFiles = allFiles.filter(f => !['cancelled', 'error'].includes(f.status));
+        const overallPct = activeFiles.length > 0
+            ? Math.round(activeFiles.reduce((sum, f) => sum + (f.progress || 0), 0) / activeFiles.length)
+            : 100;
+
+        const allDone = doneCount + cancelCount + errorCount === totalFiles;
+
+        if (allDone) {
+            await showOverallNotification({
+                title: `Upload complete — ${doneCount} of ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`,
+                body: cancelCount > 0 ? `${cancelCount} cancelled` : 'All files uploaded successfully',
+                categoryIdentifier: OVERALL_CATEGORY_DONE,
+                sticky: false,
+            });
+            return;
+        }
+
+        const pausedCount  = allFiles.filter(f => f.status === 'paused').length;
+        const activeCount  = totalFiles - doneCount - cancelCount - errorCount - pausedCount;
+
+        // Build a rich body that shows every non-zero status inline
+        const buildBody = () => {
+            const parts = [];
+            if (doneCount > 0)   parts.push(`${doneCount} done`);
+            if (pausedCount > 0) parts.push(`${pausedCount} paused`);
+            if (cancelCount > 0) parts.push(`${cancelCount} cancelled`);
+            if (activeCount > 0) parts.push(`${activeCount} uploading`);
+            return parts.length > 0 ? parts.join(' · ') : `${doneCount} of ${totalFiles} file${totalFiles !== 1 ? 's' : ''} done`;
+        };
+
+        if (isPausedState) {
+            await showOverallNotification({
+                title: `Upload paused · ${overallPct}%`,
+                body: buildBody(),
+                categoryIdentifier: OVERALL_CATEGORY_PAUSED,
+            });
+        } else {
+            await showOverallNotification({
+                title: `Uploading · ${overallPct}%`,
+                body: buildBody(),
+                categoryIdentifier: OVERALL_CATEGORY_UPLOADING,
+            });
+        }
+    };
+
+
+    //Pick Files
+
     const handlePickFiles = async () => {
         console.log("Opening picker...");
         try {
@@ -248,7 +276,7 @@ useEffect(() => {
             setFiles(prev => {
                 const startIdx = prev.length;
                 const newFiles = result.assets.map((asset, idx) => ({
-                    id: startIdx + idx,
+                    id: uuidv4(),         
                     uri: asset.uri,
                     name: asset.name,
                     size: asset.size,
@@ -257,15 +285,17 @@ useEffect(() => {
                     progress: 0,
                 }));
 
-                newFiles.forEach((_, idx) => {
-                    fileControlsRef.current[startIdx + idx] = {
+                newFiles.forEach(file => {
+                    fileControlsRef.current[file.id] = { 
                         isPaused: false,
                         isCancelled: false,
                         resume: null,
                     };
                 });
 
-                return [...prev, ...newFiles];
+                const next = [...prev, ...newFiles];
+                filesRef.current = next;
+                return next;
             });
 
             setOverallStatus('idle');
@@ -277,108 +307,174 @@ useEffect(() => {
     };
 
 
-    // Start All Uploads 
+    // Start All Uploads
+
     const handleStartAll = async () => {
         console.log("Starting upload...");
 
         if (files.length === 0) {
-            console.log("No files selected");
             Alert.alert('No files', 'Please select files first.');
             return;
         }
 
         setOverallStatus('uploading');
 
-        //  Show uploading notification in status bar
-        notifIdRef.current = await Notifications.scheduleNotificationAsync({
-            content: {
-                title: 'Uploading files...',
-                body: `0% — 0/${files.length} file(s) done`,
-                sticky: true,        
-                autoDismiss: false,
-                categoryIdentifier: 'upload_uploading',
-            },
-            trigger: null,          
-        });
-        notifCategoryRef.current = 'upload_uploading';
-
         let uid;
         try {
             uid = uuidv4();
-            console.log("UID:", uid);
         } catch (e) {
             uid = Date.now().toString(36) + Math.random().toString(36).substr(2);
-            console.log("Fallback UID:", uid);
         }
         currentUidRef.current = uid;
 
-        await Promise.all(files.map((file, idx) => uploadFile(file, idx, uid)));
+        // Show initial overall notification
+        await showOverallNotification({
+            title: `Uploading · 0%`,
+            body: `0 of ${files.length} file${files.length !== 1 ? 's' : ''} done`,
+            categoryIdentifier: OVERALL_CATEGORY_UPLOADING,
+        });
+
+        await Promise.all(files.map((file) => uploadFile(file, uid)));
 
         console.log("All uploads complete");
         setOverallStatus('done');
-
-        // Update notification to Upload Complete
-        if (notifIdRef.current) {
-            await Notifications.scheduleNotificationAsync({
-                identifier: notifIdRef.current,
-                content: {
-                    title: 'Upload Complete!',
-                    body: `All ${files.length} file(s) uploaded successfully.`,
-                    autoDismiss: true,
-                    categoryIdentifier: notifCategoryRef.current,
-                },
-                trigger: null,
-            });
-            // Auto-dismiss the notification
-            setTimeout(() => {
-                Notifications.dismissNotificationAsync(notifIdRef.current);
-                notifIdRef.current = null;
-            }, 4000);
-        }
+        await refreshOverallNotification(false);
     };
 
 
-    // Upload 
-    const uploadFile = async (file, idx, uid) => {
-        console.log(`Uploading file [${idx}]`, file);
+    // Upload single file 
 
-        fileControlsRef.current[idx] = { isPaused: false, isCancelled: false, resume: null };
+    const uploadFile = async (file, uid) => {
+        const fileId = file.id;
+        console.log(`Uploading file [${fileId}]`, file.name);
 
-        updateFile(idx, { status: 'uploading', progress: 0 });
+        fileControlsRef.current[fileId] = { isPaused: false, isCancelled: false, resume: null };
+        updateFile(fileId, { status: 'uploading', progress: 0 });
 
-        const success = await uploadInChunks(file.uri, file.name, file.size, uid, file.mimeType, idx);
+        const success = await uploadInChunks(file.uri, file.name, file.size, uid, file.mimeType, fileId);
 
         console.log(`Upload result for ${file.name}:`, success);
 
-        if (success) updateFile(idx, { status: 'done', progress: 100 });
-        else if (fileControlsRef.current[idx]?.isCancelled)
-            updateFile(idx, { status: 'cancelled', progress: 0 });
-        else updateFile(idx, { status: 'error' });
-    };
-
-
-    //  Pause 
-    const handlePauseFile = (idx) => {
-        console.log(`Pause file [${idx}]`);
-        if (fileControlsRef.current[idx]) {
-            fileControlsRef.current[idx].isPaused = true;
-            updateFile(idx, { status: 'paused' });
+        if (success) {
+            updateFile(fileId, { status: 'done', progress: 100 });
+        } else if (fileControlsRef.current[fileId]?.isCancelled) {
+            const next = filesRef.current.map(f =>
+                f.id === fileId ? { ...f, status: 'cancelled', progress: 0 } : f
+            );
+            filesRef.current = next;
+            setFiles(next);
+            refreshOverallNotification(next.some(f => f.status === 'paused'), next);
+        } else {
+            updateFile(fileId, { status: 'error' });
         }
     };
- //  Resume 
-    const handleResumeFile = (idx) => {
-        console.log(`Resume file [${idx}]`);
-        const ctrl = fileControlsRef.current[idx];
+
+
+    //  Pause / Resume / Cancel ALL
+
+    const handlePauseAll = () => {
+        console.log('Pause all');
+        Object.keys(fileControlsRef.current).forEach(fileId => {
+            const ctrl = fileControlsRef.current[fileId];
+            const file = filesRef.current.find(f => f.id === fileId);
+            if (ctrl && file?.status === 'uploading') {
+                ctrl.isPaused = true;
+            }
+        });
+        const next = filesRef.current.map(f =>
+            f.status === 'uploading' ? { ...f, status: 'paused' } : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+        setOverallStatus('paused');
+        refreshOverallNotification(true, next);
+    };
+    handlePauseAllRef.current = handlePauseAll;
+
+    const handleResumeAll = () => {
+        console.log('Resume all');
+        Object.keys(fileControlsRef.current).forEach(fileId => {
+            const ctrl = fileControlsRef.current[fileId];
+            const file = filesRef.current.find(f => f.id === fileId);
+            if (ctrl && file?.status === 'paused') {
+                ctrl.isPaused = false;
+                if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
+            }
+        });
+        const next = filesRef.current.map(f =>
+            f.status === 'paused' ? { ...f, status: 'uploading' } : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+        setOverallStatus('uploading');
+        refreshOverallNotification(false, next);
+    };
+    handleResumeAllRef.current = handleResumeAll;
+
+    const handleCancelAll = () => {
+        console.log('Cancel all');
+        Object.keys(fileControlsRef.current).forEach(fileId => {
+            const ctrl = fileControlsRef.current[fileId];
+            const file = filesRef.current.find(f => f.id === fileId);
+            if (ctrl) {
+                ctrl.isCancelled = true;
+                ctrl.isPaused = false;
+                if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
+            }
+            const activeStatuses = ['uploading', 'paused'];
+            if (file && activeStatuses.includes(file.status)) {
+                fetch(`${BASE_URL}/api/FileUploader/Cancel`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ uid: currentUidRef.current, fileName: file.name }),
+                }).catch(() => { });
+            }
+        });
+        const next = filesRef.current.map(f =>
+            ['uploading', 'paused'].includes(f.status)
+                ? { ...f, status: 'cancelled', progress: 0 }
+                : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+        setOverallStatus('idle');
+        refreshOverallNotification(false, next);
+    };
+    handleCancelAllRef.current = handleCancelAll;
+
+
+    // Per-file pause / resume / cancel
+
+    const handlePauseFile = (fileId) => {
+        if (fileControlsRef.current[fileId]) {
+            fileControlsRef.current[fileId].isPaused = true;
+        }
+        const next = filesRef.current.map(f =>
+            f.id === fileId ? { ...f, status: 'paused' } : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+        refreshOverallNotification(true, next);
+    };
+
+    const handleResumeFile = (fileId) => {
+        const ctrl = fileControlsRef.current[fileId];
         if (ctrl) {
             ctrl.isPaused = false;
-            updateFile(idx, { status: 'uploading' });
             if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
         }
+        const next = filesRef.current.map(f =>
+            f.id === fileId ? { ...f, status: 'uploading' } : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+        const anyPaused = next.some(f => f.status === 'paused');
+        refreshOverallNotification(anyPaused, next);
     };
- //   Cancel 
-    const handleCancelFile = (idx) => {
-        const ctrl = fileControlsRef.current[idx];
-        const file = files[idx];
+
+    const handleCancelFile = (fileId) => {
+        const ctrl = fileControlsRef.current[fileId];
+        const file = filesRef.current.find(f => f.id === fileId);
 
         if (ctrl) {
             ctrl.isCancelled = true;
@@ -386,45 +482,55 @@ useEffect(() => {
             if (ctrl.resume) { ctrl.resume(); ctrl.resume = null; }
         }
 
-        if (file && file.status === 'uploading' || file?.status === 'paused') {
+        const activeStatuses = ['uploading', 'paused'];
+        if (file && activeStatuses.includes(file.status)) {
             fetch(`${BASE_URL}/api/FileUploader/Cancel`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ uid: currentUidRef.current, fileName: file.name }),
-            }).catch(() => {});
+            }).catch(() => { });
         }
+
+        const next = filesRef.current.map(f =>
+            f.id === fileId ? { ...f, status: 'cancelled', progress: 0 } : f
+        );
+        filesRef.current = next;
+        setFiles(next);
+
+        const anyPaused = next.some(f => f.status === 'paused');
+        refreshOverallNotification(anyPaused, next);
     };
 
-    const handleRemoveFile = (idx) => {
-        setFiles(prev => prev.filter((_, i) => i !== idx));
-        delete fileControlsRef.current[idx];
+    const handleRemoveFile = (fileId) => {
+        const next = filesRef.current.filter(f => f.id !== fileId);
+        filesRef.current = next;
+        setFiles(next);
+        delete fileControlsRef.current[fileId];
     };
 
-    const checkPauseOrCancel = (idx) => {
+    const checkPauseOrCancel = (fileId) => {
         return new Promise((resolve) => {
-            const ctrl = fileControlsRef.current[idx];
+            const ctrl = fileControlsRef.current[fileId];
             if (!ctrl) { resolve(false); return; }
 
             if (ctrl.isCancelled) {
-                console.log(`File [${idx}] cancelled`);
                 resolve(true);
                 return;
             }
 
             if (ctrl.isPaused) {
-                console.log(`File [${idx}] paused`);
                 ctrl.resume = () => resolve(ctrl.isCancelled);
             } else resolve(false);
         });
     };
 
 
-    //  Chunk Upload 
+    // Chunk Upload
+
     const uploadInChunks = async (fileUri, fileName, fileSize, uid, mimeType, fileIndex) => {
         console.log(`Chunk upload started: ${fileName}`);
 
         const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-        console.log(`Total chunks: ${totalChunks}`);
 
         for (let index = 0; index < totalChunks; index++) {
 
@@ -435,8 +541,6 @@ useEffect(() => {
                 const offset = index * CHUNK_SIZE;
                 const length = Math.min(CHUNK_SIZE, fileSize - offset);
 
-                console.log(`Chunk ${index + 1}/${totalChunks}`);
-
                 const tempUri = `${FileSystem.cacheDirectory}chunk_${fileIndex}_${index}_${uid}.tmp`;
 
                 const base64Data = await FileSystem.readAsStringAsync(fileUri, {
@@ -444,7 +548,6 @@ useEffect(() => {
                     position: offset,
                     length,
                 }).catch(async () => {
-                    console.log("Fallback full read used");
                     const full = await FileSystem.readAsStringAsync(fileUri, { encoding: 'base64' });
                     return full.substring(
                         Math.floor(offset / 3) * 4,
@@ -453,8 +556,6 @@ useEffect(() => {
                 });
 
                 await FileSystem.writeAsStringAsync(tempUri, base64Data, { encoding: 'base64' });
-
-                console.log(`Uploading chunk ${index + 1}`);
 
                 await RNBlobUtil.fetch(
                     'POST',
@@ -477,18 +578,24 @@ useEffect(() => {
                             data: RNBlobUtil.wrap(tempUri),
                         },
                     ]
-                )
-                .uploadProgress((written, total) => {
-                    const chunkProgress = Math.round((written / total) * 100);
-                    console.log(`Chunk ${index + 1} progress: ${chunkProgress}%`);
-                });
+                );
 
                 await FileSystem.deleteAsync(tempUri, { idempotent: true });
 
-                const progress = Math.round(((index + 1) / totalChunks) * 100);
-                console.log(`Overall Progress ${fileName}: ${progress}%`);
+                if (fileControlsRef.current[fileIndex]?.isCancelled) return false;
 
-                updateFile(fileIndex, { progress });
+                const progress = Math.round(((index + 1) / totalChunks) * 100);
+
+                if (progress < 100) {
+                    updateFile(fileIndex, { progress });
+                } else {
+                    if (!fileControlsRef.current[fileIndex]?.isCancelled) {
+                        const next = filesRef.current.map(f => f.id === fileIndex ? { ...f, progress: 100 } : f);
+                        filesRef.current = next;
+                        setFiles(next);
+                        refreshOverallNotification(next.some(f => f.status === 'paused'), next);
+                    }
+                }
 
             } catch (e) {
                 console.log("Chunk upload error:", e);
@@ -497,44 +604,29 @@ useEffect(() => {
             }
         }
 
-        console.log(`Finished uploading ${fileName}`);
         return true;
     };
 
 
-    // Update File State + Notification
-    const updateFile = (idx, changes) => {
-        console.log(`Update file [${idx}]`, changes);
+    //  Update File State + refresh overall notification
 
-        setFiles(prev => {
-            const updated = prev.map((f, i) => i === idx ? { ...f, ...changes } : f);
-
-            //  Update status bar notification with overall progress
-            if (notifIdRef.current && changes.progress !== undefined) {
-                const totalProgress = Math.round(
-                    updated.reduce((sum, f) => sum + (f.progress || 0), 0) / updated.length
-                );
-                const doneCount = updated.filter(f => f.status === 'done').length;
-
-                Notifications.scheduleNotificationAsync({
-                    identifier: notifIdRef.current,
-                    content: {
-                        title: ' Uploading files...',
-                        body: `${totalProgress}% — ${doneCount}/${updated.length} file(s) done`,
-                        sticky: true,
-                        autoDismiss: false,
-                        categoryIdentifier: notifCategoryRef.current,
-                    },
-                    trigger: null,
-                });
-            }
-
-            return updated;
-        });
+    const updateFile = (fileId, changes) => {
+        const current = filesRef.current.find(f => f.id === fileId);
+        if (current && ['cancelled', 'error'].includes(current.status)) {
+            console.log(`Update file [${fileId}] skipped — already ${current.status}`);
+            return;
+        }
+        console.log(`Update file [${fileId}]`, changes);
+        const next = filesRef.current.map(f => f.id === fileId ? { ...f, ...changes } : f);
+        filesRef.current = next;
+        setFiles(next);
+        const anyPaused = next.some(f => f.status === 'paused');
+        refreshOverallNotification(anyPaused, next);
     };
 
 
-    //  Helpers 
+    // Helpers 
+
     const getFileExt = (name) => (name.split('.').pop() || 'FILE').toUpperCase().slice(0, 4);
 
     const statusColor = (s) => {
@@ -566,7 +658,8 @@ useEffect(() => {
     };
 
 
-    //  Email Screen 
+    // Email Screen
+
     if (screen === 'email') {
         return (
             <View style={{ width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
@@ -623,6 +716,7 @@ useEffect(() => {
 
 
     // Upload Screen 
+
     return (
         <View style={{ width: '100%', paddingHorizontal: 20, paddingBottom: 20 }}>
 
@@ -675,8 +769,8 @@ useEffect(() => {
                             nestedScrollEnabled={true}
                             keyboardShouldPersistTaps="handled"
                         >
-                            {files.map((file, idx) => (
-                                <View key={idx} style={s.fileRow}>
+                            {files.map((file) => (
+                                <View key={file.id} style={s.fileRow}>
 
                                     <View style={[s.extBadge, { borderColor: statusColor(file.status) }]}>
                                         <Text style={[s.extText, { color: statusColor(file.status) }]}>
@@ -690,7 +784,7 @@ useEffect(() => {
                                             {formatBytes(file.size)}
                                             {['uploading', 'paused'].includes(file.status) ? `  \u2022 ${file.progress}%` : ''}
                                             {file.status === 'done' ? '  \u2022  Done' : ''}
-                                            {file.status === 'cancelled' ? '  \u2022 Cancel' : ''}
+                                            {file.status === 'cancelled' ? '  \u2022 Cancelled' : ''}
                                             {file.status === 'error' ? '  \u2022  Error' : ''}
                                         </Text>
 
@@ -706,16 +800,16 @@ useEffect(() => {
                                         {['uploading', 'paused'].includes(file.status) && (
                                             <View style={s.fileBtns}>
                                                 {file.status === 'uploading' && (
-                                                    <TouchableOpacity style={s.miniBtn} onPress={() => handlePauseFile(idx)}>
+                                                    <TouchableOpacity style={s.miniBtn} onPress={() => handlePauseFile(file.id)}>
                                                         <Text style={s.miniBtnTxt}>Pause</Text>
                                                     </TouchableOpacity>
                                                 )}
                                                 {file.status === 'paused' && (
-                                                    <TouchableOpacity style={[s.miniBtn, { backgroundColor: '#4CAF50' }]} onPress={() => handleResumeFile(idx)}>
+                                                    <TouchableOpacity style={[s.miniBtn, { backgroundColor: '#4CAF50' }]} onPress={() => handleResumeFile(file.id)}>
                                                         <Text style={s.miniBtnTxt}>Resume</Text>
                                                     </TouchableOpacity>
                                                 )}
-                                                <TouchableOpacity style={[s.miniBtn, { backgroundColor: '#EF4444' }]} onPress={() => handleCancelFile(idx)}>
+                                                <TouchableOpacity style={[s.miniBtn, { backgroundColor: '#EF4444' }]} onPress={() => handleCancelFile(file.id)}>
                                                     <Text style={s.miniBtnTxt}>Cancel</Text>
                                                 </TouchableOpacity>
                                             </View>
@@ -723,7 +817,7 @@ useEffect(() => {
                                     </View>
 
                                     {['pending', 'cancelled', 'done', 'error'].includes(file.status) && overallStatus === 'idle' && (
-                                        <TouchableOpacity onPress={() => handleRemoveFile(idx)} style={s.removeBtn}>
+                                        <TouchableOpacity onPress={() => handleRemoveFile(file.id)} style={s.removeBtn}>
                                             <Text style={{ color: '#aaa', fontSize: 16 }}>✕</Text>
                                         </TouchableOpacity>
                                     )}
@@ -777,6 +871,7 @@ useEffect(() => {
                     style={s.nextBtn}
                     onPress={() => {
                         setFiles([]);
+                        filesRef.current = [];
                         setOverallStatus('idle');
                         setRecipientEmail('');
                         setSenderEmail('');
@@ -792,7 +887,7 @@ useEffect(() => {
 }
 
 
-//Email Styles
+// Email Styles
 const emailStyles = StyleSheet.create({
     inputContainer: {
         width: '100%',
@@ -848,7 +943,7 @@ const emailStyles = StyleSheet.create({
 });
 
 
-// ─── Upload Styles ─────────────────────────────────────────────────────────────
+// Upload Styles
 const s = StyleSheet.create({
     card: {
         width: '100%',
@@ -882,6 +977,7 @@ const s = StyleSheet.create({
         fontWeight: '500',
         letterSpacing: 0.2,
     },
+
     bottomBar: {
         backgroundColor: "#E4853E",
         paddingHorizontal: 20,
