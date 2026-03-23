@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import { useEffect, useRef, useState } from 'react';
 import {
     Alert,
+    AppState,
     Dimensions,
     ScrollView,
     StyleSheet,
@@ -163,43 +164,78 @@ export default function CloudExpressUpload() {
     const handlePauseAllRef   = useRef(null);
     const handleResumeAllRef  = useRef(null);
     const handleCancelAllRef  = useRef(null);
-
+    const appStateRef = useRef(AppState.currentState);
+    
     useEffect(() => {
-        registerForNotifications();
-        registerOverallCategories();
-
-        const sub = Notifications.addNotificationResponseReceivedListener(response => {
-            const action = response.actionIdentifier;
-
-            if (action === 'overall_pause')  handlePauseAllRef.current?.();
-            if (action === 'overall_resume') handleResumeAllRef.current?.();
-            if (action === 'overall_cancel') handleCancelAllRef.current?.();
-            if (action === 'overall_clear') {
-                Notifications.dismissNotificationAsync(OVERALL_NOTIF_ID);
-                overallNotifScheduledRef.current = false;
-            }
+    const setup = async () => {
+        await registerForNotifications();
+        await registerOverallCategories();
+        await Notifications.setNotificationChannelAsync('upload-progress', {
+            name: 'Upload Progress',
+            importance: Notifications.AndroidImportance.LOW,
+            vibrationPattern: null,
+            enableVibrate: false,
+            sound: null,
         });
+        await Notifications.setNotificationChannelAsync('expo_notifications_fallback_notification_channel', {
+            name: 'Miscellaneous',
+            importance: Notifications.AndroidImportance.LOW,
+            vibrationPattern: null,
+            enableVibrate: false,
+            sound: null,
+        });
+    };
+    setup();
 
-        return () => sub.remove();
-    }, []);
+    // ✅ Track AppState changes
+    const appStateSub = AppState.addEventListener('change', nextState => {
+        appStateRef.current = nextState;
+    });
+
+    const sub = Notifications.addNotificationResponseReceivedListener(response => {
+        const action = response.actionIdentifier;
+        if (action === 'overall_pause')  handlePauseAllRef.current?.();
+        if (action === 'overall_resume') handleResumeAllRef.current?.();
+        if (action === 'overall_cancel') handleCancelAllRef.current?.();
+        if (action === 'overall_clear') {
+            Notifications.dismissNotificationAsync(OVERALL_NOTIF_ID);
+            overallNotifScheduledRef.current = false;
+        }
+    });
+
+    return () => {
+        sub.remove();
+        appStateSub.remove(); // ✅
+    };
+}, []);
 
 
     // Overall notification helpers 
 
-    const showOverallNotification = async ({ title, body, categoryIdentifier, sticky = true }) => {
-        await Notifications.scheduleNotificationAsync({
-            identifier: OVERALL_NOTIF_ID,
-            content: {
-                title,
-                body,
-                sticky,
-                autoDismiss: !sticky,
-                categoryIdentifier,
-            },
-            trigger: null,
-        });
-        overallNotifScheduledRef.current = true;
-    };
+  const showOverallNotification = async ({ title, body, categoryIdentifier, sticky = true }) => {
+    console.log('🔔 NOTIFICATION FIRED:', title, '| AppState:', appStateRef.current);
+
+    if (appStateRef.current === 'active') {
+        console.log('⛔ SKIPPED — app is active');
+        return;
+    }
+
+    await Notifications.scheduleNotificationAsync({
+        identifier: OVERALL_NOTIF_ID,
+        content: {
+            title,
+            body,
+            sticky,
+            autoDismiss: !sticky,
+            categoryIdentifier,
+            data: {},
+            // ✅ top-level in content, no nesting
+            channelId: 'upload-progress',
+        },
+        trigger: null,
+    });
+    overallNotifScheduledRef.current = true;
+};
 
     const refreshOverallNotification = async (isPausedState = false, snapshot = null) => {
         const allFiles = snapshot ?? filesRef.current;

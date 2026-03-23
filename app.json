@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "cloud-express-app",
-    "slug": "cloud-express-app",
+    "slug": "cx-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -45,6 +45,13 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "688d6edd-9e1b-4c4f-ae66-5c3e218f2a92"
+      }
+    },
+    "owner": "prakhargvp"
   }
 }
