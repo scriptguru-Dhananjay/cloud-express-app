@@ -187,7 +187,7 @@ export default function CloudExpressUpload() {
     };
     setup();
 
-    // ✅ Track AppState changes
+    //track AppState changes
     const appStateSub = AppState.addEventListener('change', nextState => {
         appStateRef.current = nextState;
     });
@@ -205,7 +205,7 @@ export default function CloudExpressUpload() {
 
     return () => {
         sub.remove();
-        appStateSub.remove(); // ✅
+        appStateSub.remove(); 
     };
 }, []);
 
@@ -213,10 +213,10 @@ export default function CloudExpressUpload() {
     // Overall notification helpers 
 
   const showOverallNotification = async ({ title, body, categoryIdentifier, sticky = true }) => {
-    console.log('🔔 NOTIFICATION FIRED:', title, '| AppState:', appStateRef.current);
+    console.log(' NOTIFICATION FIRED:', title, '| AppState:', appStateRef.current);
 
     if (appStateRef.current === 'active') {
-        console.log('⛔ SKIPPED — app is active');
+        console.log(' SKIPPED — app is active');
         return;
     }
 
@@ -229,7 +229,7 @@ export default function CloudExpressUpload() {
             autoDismiss: !sticky,
             categoryIdentifier,
             data: {},
-            // ✅ top-level in content, no nesting
+            //top-level in content, no nesting
             channelId: 'upload-progress',
         },
         trigger: null,
